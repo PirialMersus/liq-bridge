@@ -25,6 +25,15 @@ async function getClient() {
   return connecting;
 }
 
+function toPeerStr(input) {
+  let x = String(input || '').trim();
+  if (!x) return '';
+  x = x.replace(/^https?:\/\/t\.me\//i, '').trim();
+  if (/^-?\d+$/.test(x)) return x;
+  if (!x.startsWith('@')) x = '@' + x;
+  return x;
+}
+
 function isImage(m) {
   if (!m) return false;
   if (m.photo) return true;
@@ -34,14 +43,25 @@ function isImage(m) {
 
 export async function fetchAndForwardMap({ sourceBot, staging, pair }) {
   const c = await getClient();
-  const bot = sourceBot.startsWith('@') ? sourceBot : '@' + sourceBot;
-  const channel = staging.startsWith('@') ? staging : '@' + staging;
 
-  const botEntity = await c.getEntity(bot);
-  const chEntity = await c.getEntity(channel);
+  const botPeer = toPeerStr(sourceBot);
+  const chPeer = toPeerStr(staging);
+  if (!botPeer) return { ok: false, errorText: 'bad LIQ_SOURCE_BOT (empty)' };
+  if (!chPeer) return { ok: false, errorText: 'bad STAGING_CHANNEL (empty)' };
+
+  let botEntity, chEntity;
+  try {
+    botEntity = await c.getEntity(botPeer);
+  } catch (e) {
+    return { ok: false, errorText: `getEntity(source): ${e?.message || e}` };
+  }
+  try {
+    chEntity = await c.getEntity(chPeer);
+  } catch (e) {
+    return { ok: false, errorText: `getEntity(staging): ${e?.message || e}` };
+  }
 
   const pairUp = String(pair || 'BTCUSDT').toUpperCase();
-
   const msgPair = await c.sendMessage(botEntity, { message: pairUp }).catch(() => null);
   if (!msgPair) return { ok: false, errorText: 'send-failed' };
 
@@ -57,16 +77,10 @@ export async function fetchAndForwardMap({ sourceBot, staging, pair }) {
       let fwd;
       try {
         fwd = await c.forwardMessages(chEntity, { messages: [firstFresh.id], fromPeer: botEntity, dropAuthor: true });
-      } catch {
-        fwd = null;
-      }
+      } catch { fwd = null; }
       const fwdMsg = Array.isArray(fwd) ? fwd[0] : fwd;
       if (fwdMsg?.id) {
-        try {
-          await c.invoke(new Api.messages.EditMessage({ peer: chEntity, id: fwdMsg.id, message: `#liq ${pairUp}` }));
-        } catch {
-          await c.sendMessage(chEntity, { message: `#liq ${pairUp}` }).catch(() => {});
-        }
+        try { await c.invoke(new Api.messages.EditMessage({ peer: chEntity, id: fwdMsg.id, message: `#liq ${pairUp}` })); } catch {}
         return { ok: true };
       } else {
         await c.sendMessage(chEntity, { message: `#liq ${pairUp}` }).catch(() => {});
@@ -79,4 +93,11 @@ export async function fetchAndForwardMap({ sourceBot, staging, pair }) {
   }
 
   return { ok: false, errorText: 'timeout' };
+}
+
+export function debugPeers() {
+  return {
+    bot: toPeerStr(process.env.LIQ_SOURCE_BOT || ''),
+    channel: toPeerStr(process.env.STAGING_CHANNEL || '')
+  };
 }
